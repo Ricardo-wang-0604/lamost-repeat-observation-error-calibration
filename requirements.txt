@@ -1,0 +1,20 @@
+# LAMOST 复观恒星项目依赖
+#
+# 实测环境：Python 3.9.13 (Windows)
+#
+# 注意两个环境坑（本机实测，见 README 第 6 节）：
+#   1) 无 pyarrow → 中间数据用 pickle（全量 stellar.pkl 约 1.15 GB）
+#   2) sklearn 的 KNN 必须 n_jobs=1，否则 joblib 会构造 multiprocessing.SimpleQueue
+#      （底层是命名管道），在受限环境下抛 PermissionError: [WinError 5]
+
+numpy>=1.20
+pandas>=1.3
+scipy>=1.7
+scikit-learn>=1.0
+lightgbm>=3.3
+matplotlib>=3.4
+astropy>=5.0
+requests>=2.25
+
+# 可选：若需 parquet 中间数据（本机未装成）
+# pyarrow>=8.0
