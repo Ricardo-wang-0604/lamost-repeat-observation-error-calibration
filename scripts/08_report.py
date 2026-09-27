@@ -227,8 +227,52 @@ def main():
           '指向**光纤污染或 Gaia 源错配**。异常组中 A1+A2 占 36.5%，'
           '与 §3 中 A 型 [Fe/H] 的 χ²_red 偏高相呼应。\n')
 
-    # ---------- 7. 跨计划 ----------
-    A('\n## 7. 跨观测计划的系统偏差（配对）\n')
+    # ---------- 7. 时间间隔判别测试 ----------
+    A('\n## 7. 判别测试：极端离散来自「变星」还是「污染/错配」？\n')
+    ti = os.path.join(TABLES, 'time_interval_report.txt')
+    if os.path.exists(ti):
+        txt = read_text(ti)
+        # 抽出分箱表与结论行
+        keep = []
+        for ln in txt.splitlines():
+            s = ln.strip()
+            if (s.startswith('Δt') or s.startswith('1-') or s.startswith('10-')
+                    or s.startswith('100-') or s.startswith('400-')
+                    or s.startswith('1000-') or s.startswith('2500-')
+                    or 'Spearman' in s or s.startswith('→')
+                    or s.startswith('z 的') or s.startswith('z >')
+                    or '尾部阈值' in s or s.startswith('参数')):
+                keep.append(s)
+        A('\n```\n' + '\n'.join(keep) + '\n```\n')
+        A('\n**判别逻辑**：变星/双星（真实参数随时间演化）会让离散度**随 Δt 单调增大**；'
+          '污染/源错配是随机事件，离散度**与 Δt 无关但保留重尾**。\n')
+        A('\n**结论**：实测 Spearman ρ ≈ +0.015（Teff 与 [Fe/H] 均如此），'
+          '即离散度与时间间隔**基本无关** ⇒ 排除变星主导，支持污染/错配。\n')
+        A('\n**z 分布形状**（z = |Δx| / (√2·σ_quoted)，官方误差正确时服从半正态，中位 0.674）：\n')
+        A('\n- 中位数实测 0.603 / 理论 0.674 = **0.89×** → 官方误差在主体上**略微保守**\n'
+          '- P90 = 1.977 / 1.645 = 1.2×，P99 = 7.06 / 2.58 = 2.7×，'
+          'P99.9 = 31.8 / 3.29 = **9.7×**\n'
+          '- 超过 3.291σ 的占比 = 3.676%，标准正态应 0.100% → **超 36.8 倍**\n')
+        A('\n这是**污染样本的教科书特征**：主体符合预期、尾巴严重超标。\n')
+    else:
+        A('_（尚未计算；请运行 `scripts/09_time_interval.py`）_\n')
+
+    # ---------- 8. 由此解开的文献矛盾 ----------
+    A('\n## 8. 由此解开的文献矛盾：χ² 判据 vs 分位数判据\n')
+    A('\n| 工作 | 判据 | 对离群敏感度 | 结论 |')
+    A('|---|---|---|---|')
+    A('| Zhang S. et al. 2023, RAA 23, 015018 | χ² 类统计量、修正因子 k | 极敏感（平方量） | 官方误差估计不准 |')
+    A('| Liang J.-C. et al. 2025, ApJ 996, 97 (PyLASP) | 分位数 / 直接比较 | 稳健 | 官方误差偏保守 |')
+    A('| 本项目 | 两者都做 | — | 两者都对，测的是分布的不同部位 |')
+    A('\n- **分位数口径**（z 中位 0.603 vs 理论 0.674）→ 主体略偏保守，**与 Liang 2025 一致**')
+    A('- **χ² 口径**（χ²_red = 5.875）→ 被重尾完全主导，**与 Zhang 2023 的"误差不准"同向**')
+    A('\n因为 χ² 是平方量，36.8 倍的重尾超标足以把 χ²_red 从 1 抬到 5.9，'
+      '而主体（中位数、P90）几乎不受影响。\n')
+    A('\n> **方法学结论**：用复观检验参数误差时，χ² 类判据对污染极不稳健，'
+      '必须同时报告分位数口径，否则会得出与稳健口径相反的结论。\n')
+
+    # ---------- 9. 跨计划 ----------
+    A('\n## 9. 跨观测计划的系统偏差（配对）\n')
     po = rd('plan_pair_offsets.csv')
     if po is not None and not po.empty:
         for param in ('teff', 'logg', 'feh'):
@@ -241,8 +285,8 @@ def main():
     else:
         A('_（尚未计算）_\n')
 
-    # ---------- 8. 光谱 ----------
-    A('\n## 8. 真实光谱特征\n')
+    # ---------- 10. 光谱 ----------
+    A('\n## 10. 真实光谱特征\n')
     sc = rd('spectra_correlations.csv')
     if sc is not None and not sc.empty:
         piv = sc.pivot_table(index='band', columns='param', values='spearman')
