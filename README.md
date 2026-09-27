@@ -112,7 +112,8 @@ LAMOST-复观恒星/
 │   ├── 05_plan_systematics.py  跨计划配对比较
 │   ├── 06_spectra.py        光谱特征提取与目录交叉验证
 │   ├── 07_figures.py        出图
-│   └── 08_report.py         汇总报告
+│   ├── 08_report.py         汇总报告
+│   └── 09_time_interval.py  时间间隔判别测试（区分变星与污染）
 ├── data/{raw,interim}/      数据（不进仓库）
 └── results/{tables,figures}/ results/REPORT.md + 8 张图 + 34 个结果表
 ```
@@ -168,10 +169,16 @@ $\chi^2_{red} \approx 1$ 表示官方误差自洽。**均值必须用误差加�
 
 评测：$\text{RMSE}$，泄漏倍数 $= \text{RMSE}_{\rm grouped} / \text{RMSE}_{\rm random}$。
 
-> **定义澄清**：倍数 $= \text{RMSE}_{\rm grouped}/\text{RMSE}_{\rm random} > 1$ 表示
-> 随机划分把 RMSE 压低了。若用百分比表达请注意分母：
-> `src/leakage.py` 用 $(\text{RMSE}_g-\text{RMSE}_r)/\text{RMSE}_g$，
-> 而 $(\text{factor}-1)\times100$ 的分母是 $\text{RMSE}_r$，两者相差一个因子。
+> **定义澄清（两个百分比口径分母不同，勿混用）**：
+> - `rel_increase_over_random_pct = (RMSE_g − RMSE_r) / RMSE_r × 100`
+>   —— "随机划分把 RMSE 压低了多少百分比"，**README 用的是这个**
+> - `rel_inflation_pct = (RMSE_g − RMSE_r) / RMSE_g × 100`
+>   —— 历史口径，保留以兼容旧结果表
+>
+> 两者相差一个因子 $RMSE_g/RMSE_r$。同一批实验里，`repeat≥3 / logg / mcs=1`
+> 的 factor = 2.2940，按前一式是 **129.4%**，按后一式是 **56.4%**。
+> `src/leakage.py` 现已**同时输出两列并分别命名**，不再只给一个含混的
+> `rel_inflation_pct`。
 
 ### 4.3 关键实验设计陷阱（务必阅读）
 
@@ -408,7 +415,7 @@ A 型光谱以氢线为主、**金属吸收线极弱**，[Fe/H] 缺少「锚点�
 ### 5.7 真实光谱的谱线指数
 
 从 `20111024.tar.gz`（461 MB，**9817 条光谱，全量**）读 FITS，自建窄带等值宽度管线，
-与目录表按 `OBSID` 精确 join。全量耗时 10.0 分钟（含红移改正）。
+与目录表按 `OBSID` 精确 join。全量耗时 **10.0 分钟**（含红移改正）。
 
 ${\rm EW} = \sum_i (1 - F_i/F_c(\lambda_i))\,\Delta\lambda$，$F_c$ 由两侧连续谱带的**中位数**线性内插。
 

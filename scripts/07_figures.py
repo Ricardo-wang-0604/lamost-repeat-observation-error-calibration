@@ -104,7 +104,9 @@ def fig3():
         ax.set_xticks(x)
         ax.set_xticklabels(s['n_obs_bin'].astype(str))
         ax.set_xlabel('Observations per star')
-        ax.set_ylabel('sigma / err')
+        # 左轴画的是两条**绝对量纲**曲线（pooled sigma 与官方误差中位），
+        # 不是比值 —— 标签不能写 'sigma / err'（feh 面板量级仅 0.08 vs 0.039，极易误读）。
+        ax.set_ylabel('absolute value  (K for teff, dex for logg/feh)')
         ax.set_title(param)
         ax.grid(alpha=0.3)
         h1, l1 = ax.get_legend_handles_labels()

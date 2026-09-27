@@ -57,7 +57,14 @@ def say(s=''):
 
 
 def per_star_per_plan(df, target, min_snr=10.0):
-    """去低信噪比后，算 (gp_id, plan_prefix) 的加权均值与计数。"""
+    """
+    去低信噪比后，算 (gp_id, plan_prefix) 的**未加权**均值与计数。
+
+    注意：这里用的是普通算术均值，**不是**误差加权均值（官方 `*_err` 列未被使用）。
+    早期版本的 docstring 误写为"加权均值"，已更正。
+    选择未加权的理由：官方误差本身在大样本上尚待检验（见 README §5.1），
+    若用它做权重会把待检验的量引入估计量；未加权均值在此更保守。
+    """
     use = df[['gp_id', 'plan_prefix', target]].copy()
     use = use[use['plan_prefix'].notna()]
     if 'snrr' in df.columns:
@@ -165,6 +172,14 @@ def main():
     if len(PAIRS):
         PAIRS.to_csv(os.path.join(TABLES, 'plan_pair_offsets.csv'),
                      index=False, encoding='utf-8-sig')
+        # 各计划对之间共享恒星的数量（此前 docstring 承诺产出但代码未写，已补上）
+        pc = (PAIRS.groupby(['plan_a', 'plan_b'], as_index=False)
+              .agg(n_common=('n_common', 'max'), n_targets=('target', 'nunique')))
+        pc = pc.sort_values('n_common', ascending=False)
+        pc.to_csv(os.path.join(TABLES, 'plan_pair_counts.csv'),
+                  index=False, encoding='utf-8-sig')
+        say('\n-> plan_pair_offsets.csv (%d 行), plan_pair_counts.csv (%d 行)'
+            % (len(PAIRS), len(pc)))
     if len(MEANS):
         MEANS.to_csv(os.path.join(TABLES, 'plan_means.csv'),
                      index=False, encoding='utf-8-sig')

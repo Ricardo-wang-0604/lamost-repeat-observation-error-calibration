@@ -98,9 +98,12 @@ def main():
             say('  有效样本 %d 行 / %d 颗星  (重复率 %.3f×)'
                 % (len(y), len(np.unique(g)), len(y) / len(np.unique(g))))
 
+            # 复用已构造的矩阵（matrix=...），避免在 745 万行上重复执行 dropna。
+            # 早期版本这一步会在泄漏实验内部再算一遍、特征重要性里算第三遍。
+            M = (X, y, g, cols, sub)
             tab, summ, infl, _ = lk.leakage_experiment(
                 df, target=tgt, feature_set=feat, kind='lgbm',
-                test_size=0.2, repeats=REPEATS, seed=42)
+                test_size=0.2, repeats=REPEATS, seed=42, matrix=M)
             tab['feature_set'] = feat
             tab['target'] = tgt
             runs.append(tab)
@@ -115,7 +118,8 @@ def main():
             say('  → RMSE 虚高倍数 %.3f×   相对虚高 %.1f%%'
                 % (infl['factor'], infl['rel_inflation_pct']))
 
-            imp = lk.feature_importance(df, target=tgt, feature_set=feat, kind='lgbm')
+            imp = lk.feature_importance(df, target=tgt, feature_set=feat,
+                                        kind='lgbm', matrix=M)
             if len(imp):
                 imp.to_csv(os.path.join(TABLES, 'leakage_importance_%s_%s.csv' % (feat, tgt)),
                            index=False, encoding='utf-8-sig')

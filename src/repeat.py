@@ -84,7 +84,6 @@ def group_stats(df, key='gp_id', value='teff', err='teff_err',
         wmean=('_wmean', 'first'),
         pooled_ss=('_dev2', 'sum'),
         chi2=('_chi2t', 'sum'),
-        err_mean=(err, 'mean'),
         err_median=(err, 'median'),
     )
     if snr_col in use.columns:
@@ -111,8 +110,9 @@ def pooled_repeatability(stats):
         'dof': int(dof),
         'pooled_sigma': sigma,
         'chi2_red': (chi2 / dof_chi) if dof_chi > 0 else np.nan,
+        # 注意口径：err_median 是「逐组中位误差的中位数」（组加权），
+        # 不是「全部观测误差的中位数」。Teff 前者 41.22 K、后者 37.51 K，差约 10%。
         'err_median': err_med,
-        'err_median_of_medians': float(stats['err_median'].median()),
         'ratio_sigma_over_err': (sigma / err_med) if err_med else np.nan,
     }
 

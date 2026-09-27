@@ -140,11 +140,17 @@ def run_split(X, y, g, tr, te, kind='lgbm', seed=42, tag=''):
 
 
 def leakage_experiment(df, target='teff', feature_set='photometry',
-                       kind='lgbm', test_size=0.2, repeats=3, seed=42):
+                       kind='lgbm', test_size=0.2, repeats=3, seed=42, matrix=None):
     """
     跑随机划分与分组划分各 repeats 次，返回结果表与汇总。
+
+    matrix: 可选，`build_matrix()` 的返回值 (X, y, g, cols, sub)。
+            传入可避免在 745 万行上重复执行 dropna —— 调用方常常已经算过一次。
     """
-    X, y, g, cols, sub = build_matrix(df, feature_set=feature_set, target=target)
+    if matrix is not None:
+        X, y, g, cols, sub = matrix
+    else:
+        X, y, g, cols, sub = build_matrix(df, feature_set=feature_set, target=target)
     rows = []
     for r in range(repeats):
         s = seed + r
@@ -171,6 +177,13 @@ def leakage_experiment(df, target='teff', feature_set='photometry',
         'rmse_random': mr,
         'rmse_grouped': mg,
         'abs_inflation': mg - mr,
+        # 两个百分比口径**分母不同**，必须分开命名，否则同一个量会有两个值。
+        #   rel_increase_over_random_pct : (RMSE_g - RMSE_r) / RMSE_r × 100
+        #                                  —— "随机划分把 RMSE 压低了多少百分比"
+        #                                     （README 用的是这个口径）
+        #   rel_inflation_pct            : (RMSE_g - RMSE_r) / RMSE_g × 100
+        #                                  —— 历史口径，保留以兼容旧结果表
+        'rel_increase_over_random_pct': 100.0 * (mg - mr) / mr if mr else np.nan,
         'rel_inflation_pct': 100.0 * (mg - mr) / mg if mg else np.nan,
         'factor': mg / mr if mr else np.nan,
         'r2_random': float(tab.loc[tab['tag'] == 'random', 'r2'].mean()),
@@ -179,8 +192,13 @@ def leakage_experiment(df, target='teff', feature_set='photometry',
     return tab, summary, inflation, sub
 
 
-def feature_importance(df, target='teff', feature_set='photometry', kind='lgbm', seed=42):
-    X, y, g, cols, _ = build_matrix(df, feature_set=feature_set, target=target)
+def feature_importance(df, target='teff', feature_set='photometry', kind='lgbm',
+                       seed=42, matrix=None):
+    """特征重要性。matrix 同上，传入可复用以避免重复 dropna。"""
+    if matrix is not None:
+        X, y, g, cols, _ = matrix
+    else:
+        X, y, g, cols, _ = build_matrix(df, feature_set=feature_set, target=target)
     m = make_model(kind, seed)
     m.fit(X, y)
     imp = getattr(m, 'feature_importances_', None)

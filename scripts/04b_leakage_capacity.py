@@ -98,7 +98,8 @@ def subsample(sub, seed=0, key='gp_id'):
     uniq = sub[key].unique()
     rng = np.random.RandomState(seed)
     rng.shuffle(uniq)
-    # 按组大小从大到小累积，避免长尾导致反复扫描
+    # 按随机抽到的星顺序累积，直到达到 MAX_N。
+    # （注释早期写"按组大小从大到小累积"，但代码从未排序 —— 随机顺序更无偏，注释已更正。）
     sizes = sub.groupby(key, observed=True).size()
     order = sizes.reindex(uniq).fillna(0).to_numpy()
     cum = np.cumsum(order)
