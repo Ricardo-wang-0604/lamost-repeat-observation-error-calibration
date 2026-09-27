@@ -95,11 +95,19 @@ def main():
                 scale[key] = int(m.group(1))
     A('| 项 | 数值 |')
     A('|---|---|')
-    A('| 观测总数 | %s |' % f"{scale.get('obs', 0):,}")
-    A('| 唯一恒星（gp_id） | %s |' % f"{scale.get('gp', 0):,}")
-    A('| 唯一位置编码（designation） | %s |' % f"{scale.get('des', 0):,}")
-    if scale.get('gp'):
+    for key, label in (('obs', '观测总数'), ('gp', '唯一恒星（gp_id）'),
+                       ('des', '唯一位置编码（designation）')):
+        if key in scale:
+            A('| %s | %s |' % (label, f"{scale[key]:,}"))
+        else:
+            # 不能用 .get(key, 0) —— 那会把"没读到"伪造成"数值为 0"，
+            # 静默写进报告。缺输入就必须显式标注缺失。
+            A('| %s | _未取得（缺 qc_report.txt）_ |' % label)
+    if 'obs' in scale and 'gp' in scale and scale.get('gp'):
         A('| 复观倍率 | %.3f× |' % (scale['obs'] / scale['gp']))
+    if 'obs' not in scale:
+        A('\n> ⚠️ 第 1 节未能读取 `results/tables/qc_report.txt`，规模数字缺失；'
+          '请先运行 `scripts/02_qc.py`。')
 
     # ---------- 2. 总体标定 ----------
     A('\n## 2. 复观一致性与官方误差标定（总体）\n')
@@ -140,20 +148,87 @@ def main():
                         'err_median', 'ratio_sigma_over_err', 'chi2_red']))
 
     # ---------- 5. 泄漏 ----------
-    A('\n## 5. 机器学习标签泄漏\n')
+    # 优先用主实验（04b 容量扫描，全量数据），
+    # 因为它才是 README §5.4 引用的结果。
+    # 04_leakage.py 的 leakage_summary.csv 是早期在 118 万行中间态数据上产出的，
+    # 与第 1 节的 745 万行规模不一致，**不能混进同一份报告**。
+    A('\n## 5. 机器学习标签泄漏（主实验）\n')
+    lc = rd('leakage_capacity.csv')
+    if lc is not None and not lc.empty:
+        A('泄漏倍数 `factor = RMSE_grouped / RMSE_random`，'
+          '>1 表示按观测随机划分把 RMSE 压低了。\n')
+        for param in ('teff', 'logg', 'feh'):
+            s = lc[lc['target'] == param]
+            if s.empty:
+                continue
+            piv = s.pivot_table(index='subset', columns=['model', 'param'],
+                                values='factor')
+            piv = piv.reset_index()
+            A('\n### %s\n' % param)
+            A(md_table(piv, floatfmt='%.3f'))
+            n = (s.groupby('subset')
+                 .agg(n_samples=('n_samples', 'first'),
+                      n_groups=('n_groups', 'first'),
+                      hit=('frac_exact_hit_random', 'first'))
+                 .reset_index())
+            n['hit'] = (100.0 * n['hit']).round(1)
+            n['repeat_rate'] = (n['n_samples'] / n['n_groups']).round(3)
+            A('\n子集规模与随机划分下的精确命中率：\n')
+            A(md_table(n, floatfmt='%.3f'))
+    else:
+        A('_（主实验尚未完成；请运行 `scripts/04b_leakage_capacity.py`）_\n')
+
     ls = rd('leakage_summary.csv')
     if ls is not None:
-        cols = ['feature_set', 'target', 'features', 'n_samples', 'n_groups',
-                'rmse_random', 'rmse_grouped', 'factor', 'rel_inflation_pct',
-                'r2_random', 'r2_grouped']
+        A('\n### 附：基础版实验（早期中间态数据，仅存档，勿引用同行比较）\n')
+        A('⚠️ 下表产出于 **1,180,000 行**的中间态数据，与本文其他章节的 '
+          '7,450,303 行不同源，且其下采样方式破坏了复观结构（见 README §4.3）。\n')
+        cols = ['feature_set', 'target', 'n_samples', 'n_groups',
+                'rmse_random', 'rmse_grouped', 'factor']
         A(md_table(ls, [c for c in cols if c in ls.columns]))
-        A('\n- `factor = RMSE_grouped / RMSE_random`，>1 表示随机划分把 RMSE 压低了。')
-        A('- `feature_set = photometry` 的特征是恒星级常数，泄漏最严重。\n')
-    else:
-        A('_（泄漏实验尚未完成）_\n')
 
-    # ---------- 6. 跨计划 ----------
-    A('\n## 6. 跨观测计划的系统偏差（配对）\n')
+    # ---------- 6. 稳健性 ----------
+    A('\n## 6. 稳健性自查：全样本 χ²_red 由约 1% 的污染组主导\n')
+    tr = rd('robustness_trim_variables.csv')
+    if tr is not None and not tr.empty:
+        for param in ('teff', 'logg', 'feh'):
+            s = tr[tr['param'] == param].copy()
+            if s.empty:
+                continue
+            s['剔除尾部'] = (100.0 * s['trim_frac']).map(lambda x: '%.2f%%' % x)
+            A('\n### %s\n' % param)
+            A(md_table(s, ['剔除尾部', 'n_groups', 'pooled_sigma',
+                           'err_median', 'chi2_red', 'ratio_sigma_over_err']))
+        A('\n**判读**：剔除最离散的 0.1% 组，Teff 的 χ²_red 即从 5.875 落到 2.143；'
+          '剔除 1% 落到 1.233。说明全样本的"超出 1"并非官方误差系统性偏小，'
+          '而是被极少数污染/错配组主导。\n')
+    sn = rd('robustness_snr_trim.csv')
+    if sn is not None and not sn.empty:
+        A('\n### 分 S/N 箱 + 剔除最离散 1%（双重控制）\n')
+        A(md_table(sn, ['param', 'snr_lo', 'snr_hi', 'n_groups',
+                        'chi2_red_all', 'chi2_red_trim1pct']))
+    ol = rd('outlier_bad_sample.csv')
+    og = rd('outlier_good_sample.csv')
+    if ol is not None and og is not None and not ol.empty:
+        A('\n### 异常组 vs 正常组画像\n')
+        rows = []
+        for lab, t in (('异常组 χ²/dof>P99', ol), ('正常组', og)):
+            rows.append({
+                '组': lab, '样本数': len(t),
+                '复观次数中位': float(t['n_obs'].median()),
+                'Teff组内极差中位(K)': float(t['teff_range'].median()),
+                '官方误差中位(K)': float(t['err_median'].median()),
+                '极差/官方误差': float((t['teff_range'] / t['err_median'].replace(0, np.nan)).median()),
+                'χ²/dof 中位': float(t['chi2_dof'].median()),
+            })
+        A(md_table(pd.DataFrame(rows), floatfmt='%.2f'))
+        A('\n极端组的 Teff 组内极差中位达 594 K（正常组 47 K），且最高 χ²/dof 的组'
+          '给出 6332→13328 K 这类跨 7000 K 的"复观"——物理上不可能是同一颗恒星，'
+          '指向**光纤污染或 Gaia 源错配**。异常组中 A1+A2 占 36.5%，'
+          '与 §3 中 A 型 [Fe/H] 的 χ²_red 偏高相呼应。\n')
+
+    # ---------- 7. 跨计划 ----------
+    A('\n## 7. 跨观测计划的系统偏差（配对）\n')
     po = rd('plan_pair_offsets.csv')
     if po is not None and not po.empty:
         for param in ('teff', 'logg', 'feh'):
@@ -166,8 +241,8 @@ def main():
     else:
         A('_（尚未计算）_\n')
 
-    # ---------- 7. 光谱 ----------
-    A('\n## 7. 真实光谱特征\n')
+    # ---------- 8. 光谱 ----------
+    A('\n## 8. 真实光谱特征\n')
     sc = rd('spectra_correlations.csv')
     if sc is not None and not sc.empty:
         piv = sc.pivot_table(index='band', columns='param', values='spearman')

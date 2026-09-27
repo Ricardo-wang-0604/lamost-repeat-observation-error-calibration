@@ -36,8 +36,10 @@ FITS 结构（实测）
     Na D     5893    蓝 5865-5885  红 5905-5925
     Hα       6562.8  蓝 6540-6555  红 6570-6590
 
-注意：这些是**观测波长**。太阳型恒星的视向速度会带来 ~几十 km/s 的位移
-（约 0.1-0.3 Å），对宽窄带指数影响可忽略；若做精细丰度分析需先退红移。
+注意：这里的静止波长指**恒星静止系**。实测网格并非恒星静止系（判定依据与
+其局限见下方 WAVELENGTH_FRAME 处注释），因此 band_indices 支持传入 rv 做改正。
+对**宽带等值宽度**该改正影响很小（LRS 像元 1.336 Å > 典型位移 0.66 Å），
+但做**线心/视向速度**测量时是必需的。
 """
 from __future__ import annotations
 
@@ -46,6 +48,77 @@ import re
 import tarfile
 
 import numpy as np
+
+# ---------------------------------------------------------------- 波长坐标系
+
+# 光速（km/s），用于视向速度的红移改正
+C_KMS = 299792.458
+
+# 波长网格坐标系 —— **判定为「非恒星静止系」**
+#
+# 判定方法与它**能**证明什么、**不能**证明什么（重要，勿过度解读）：
+#
+#   做法：取视向速度 |RV| 大的光谱，量强线实测线心对 RV 的回归斜率。
+#        恒星静止系 → δλ ≈ 0；未改正 → δλ = λ_rest · RV / c。
+#   实测（n=525，RV 在 −341 ~ +99 km/s）：
+#        Hα   0.020838（λ/c 预期 0.021891，比值 0.95，r=+0.873）
+#        Mg b 0.018608（预期 0.017262，比值 1.08，r=+0.715）
+#        Na D 0.010613（预期 0.019657，比值 0.54，r=+0.412）
+#        Hβ   0.020644（预期 0.016216，**比值 1.27** ← 偏高，未获解释）
+#
+#   ✅ 能证明：网格**不是**恒星静止系（否则斜率应为 0）。
+#   ❌ 不能证明：网格是「观测系」还是「日心系」。
+#      若网格为日心系、而目录 rv 也是日心速度，线心同样位于 λ_rest(1+rv/c)，
+#      回归斜率**同样是 λ/c**，本检验无法区分。
+#      要区分必须把该次观测的日心速度 v_bary(RA, Dec, MJD) 放进二元回归。
+#      —— 本模块早期注释曾写"若已是日心系则不可能有 RV 斜率"，那句是错的。
+#
+#   ⇒ 因此这里只声称"未改正到恒星静止系"，不声称"已确证为观测系"。
+#     不论网格是观测系还是日心系，to_rest_frame 用目录 rv 做除法都能把线心
+#     移回静止波长（两者同源时等效），所以科学产物不受此歧义影响。
+#
+# Na D 斜率只有预期的 54%：Na D 双线既有随恒星运动的天体成分，又有恒定处于
+# 零速度的**星际**吸收成分，混合后把斜率稀释 —— 这反过来支持"未改正"的判断。
+#
+# 该改正的实际影响（实测，见 results/tables/rv_ab_test.csv）
+# ----------------------------------------------------------
+# LAMOST LRS 像元尺度 dl = 1.336 Å，而 RV 中位数 |RV| = 30 km/s 在 Hα 处仅位移
+# 0.66 Å —— **不足一个像元**。因此对"宽带积分量（等值宽度）"的影响很小：
+# 中位 |ΔEW| < 0.14 Å（Hβ/Mg b/Hα 的中位差为 0.0000），相关系数
+# 15 项改善 / 8 项变差 / 1 项持平，属噪声级。
+# **真正必需该改正的是线心/视向速度类测量**（±340 km/s → Hα ±7.4 Å）。
+# 本模块照常执行改正（无害且在高 |RV| 端有益），但不夸称其效果。
+WAVELENGTH_FRAME = 'not-stellar-rest'
+
+# 各谱线的残余零点偏差（Å），由大样本实测中位数得到，用于把线心对回静止波长。
+# 留空字典表示不做零点修正。
+ZERO_POINT = {}
+
+
+def to_rest_frame(wave, rv):
+    """
+    把观测系波长换算到恒星静止系。
+
+        λ_rest = λ_obs / (1 + v/c)
+
+    rv 单位为 km/s。rv 为 None 或非有限值时原样返回。
+
+    例：v = −258 km/s 时 β = −8.6e-4，Hα 由 6562.8 移到 6568.4 Å 附近，
+    与实测的 −5.6 Å 偏移量级一致。
+    """
+    if rv is None:
+        return wave
+    try:
+        rv = float(rv)
+    except (TypeError, ValueError):
+        return wave
+    if not np.isfinite(rv):
+        return wave
+    beta = rv / C_KMS
+    if abs(beta) >= 0.1:          # |v| >= 30000 km/s 显然不是恒星，拒绝
+        return wave
+    return np.asarray(wave, dtype=np.float64) / (1.0 + beta)
+
 
 # ---------------------------------------------------------------- 带定义
 
@@ -178,7 +251,7 @@ def _band_median(wave, flux, lo, hi, mask=None, min_pts=3):
 
 
 def band_indices(wave, flux, ivar=None, badmask=None, bands=None,
-                 min_snr=3.0):
+                 min_snr=3.0, rv=None, zero_point=None):
     """
     计算各谱线的等值宽度（Å）。
 
@@ -198,11 +271,18 @@ def band_indices(wave, flux, ivar=None, badmask=None, bands=None,
     另加 'n_ok' 表示成功测得的谱线条数。
     """
     bands = bands or BANDS
+    zpt = ZERO_POINT if zero_point is None else zero_point
     out = {}
     if wave is None or flux is None or len(wave) < 50:
         out.update({k: np.nan for k in bands})
         out['n_ok'] = 0
         return out
+
+    # 红移改正：观测系 → 恒星静止系
+    # LAMOST 波长网格经实测判定为观测系（见 WAVELENGTH_FRAME 处注释）。
+    # 不做改正时线心随 RV 漂移：±340 km/s 在 Hα 处对应 ±7.4 Å，远超像元尺度 1.336 Å。
+    if rv is not None:
+        wave = to_rest_frame(wave, rv)
 
     order = np.argsort(wave)
     wave = np.asarray(wave, dtype=np.float64)[order]
@@ -214,9 +294,10 @@ def band_indices(wave, flux, ivar=None, badmask=None, bands=None,
 
     n_ok = 0
     for name, spec in bands.items():
-        c = spec['c']
-        blo, bhi = spec['b']
-        rlo, rhi = spec['r']
+        dz = float(zpt.get(name, 0.0))
+        c = spec['c'] + dz
+        blo, bhi = spec['b'][0] + dz, spec['b'][1] + dz
+        rlo, rhi = spec['r'][0] + dz, spec['r'][1] + dz
         # 覆盖判据：整段（蓝带左端到红带右端）必须落在波长网格内
         if blo < wmin or rhi > wmax:
             out[name] = np.nan
@@ -282,8 +363,8 @@ def continuum_slope(wave, flux, windows=((4000, 4200), (6000, 6200))):
     return float(a / b)
 
 
-def spectrum_features(sp):
-    """从 read_spectrum 结果提取一行特征（含头信息）。"""
+def spectrum_features(sp, rv=None):
+    """从 read_spectrum 结果提取一行特征（含头信息与谱线指数）。"""
     h = sp.get('header', {})
     row = {
         'name': sp.get('name'),
@@ -305,7 +386,12 @@ def spectrum_features(sp):
         row['wave_min'] = float(np.nanmin(wave))
         row['wave_max'] = float(np.nanmax(wave))
         row['wave_n'] = int(len(wave))
-    row.update(band_indices(wave, flux, sp.get('ivar'), sp.get('andmask')))
+    # rv 优先取调用方传入的值（来自目录表 stellar.rv），
+    # 其次看 FITS 头里有没有（LAMOST DR10 的 HDU0 头通常没有 RV）。
+    if rv is None:
+        rv = h.get('RV')
+    row['rv_used'] = float(rv) if rv is not None and np.isfinite(float(rv)) else np.nan
+    row.update(band_indices(wave, flux, sp.get('ivar'), sp.get('andmask'), rv=rv))
     row['contslope'] = continuum_slope(wave, flux)
     if flux is not None:
         with np.errstate(invalid='ignore'):

@@ -154,9 +154,17 @@ def main():
     say('-' * 82)
     df = df.copy()
     if 'mjd' in df.columns:
-        yr = 1858.0 + df['mjd'].to_numpy(dtype=np.float64) / 365.25
-        df['epoch'] = pd.cut(yr, [2011, 2013, 2015, 2017, 2019, 2023],
+        # MJD 0 = 1858-11-17，故 yyyy = 1858.879 + mjd/365.25。
+        # 原先写成 1858.0 会让标签整体偏早 0.879 年，并把 MJD<55883.2
+        # （即 2011-11-18 之前）的 40,816 行判为 NaN 后静默丢弃。
+        yr = 1858.879 + df['mjd'].to_numpy(dtype=np.float64) / 365.25
+        df['epoch'] = pd.cut(yr, [-np.inf, 2013.879, 2015.879, 2017.879, 2019.879, np.inf],
                              labels=['2011-12', '2013-14', '2015-16', '2017-18', '2019-22'])
+        n_drop = int(df['epoch'].isna().sum())
+        say('  MJD→年 使用常数 1858.879；日期范围 %.1f – %.1f'
+            % (yr.min(), yr.max()))
+        if n_drop:
+            say('  ⚠ 有 %d 行落在分箱之外' % n_drop)
         rows = []
         for v in rp.TARGETS:
             t = rp.repeatability_by_subset(df, key='gp_id', value=v, err=rp.ERR_COL[v],

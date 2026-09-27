@@ -88,8 +88,13 @@ def ensure_extracted(tar_path, outdir):
     return sorted(files)
 
 
-def extract(limit_per_tar=None):
-    """读取光谱并提取谱线特征。先解压再逐条读，避免 O(N²) 退化。"""
+def extract(limit_per_tar=None, rvmap=None):
+    """
+    读取光谱并提取谱线特征。先解压再逐条读，避免 O(N²) 退化。
+
+    rvmap: {obsid -> rv(km/s)}，来自目录表 stellar。
+           用于把观测系波长换算到恒星静止系（见 src/spectra.py 的 WAVELENGTH_FRAME）。
+    """
     tars = sorted([p for p in os.listdir(RAW) if p.endswith('.tar.gz')])
     if not tars:
         say('!! data/raw 下没有 .tar.gz 日包')
@@ -97,8 +102,10 @@ def extract(limit_per_tar=None):
     say('日包: %s' % ', '.join(tars))
     if limit_per_tar:
         say('限量 %d 条/日包' % limit_per_tar)
+    say('红移改正: %s' % ('启用（rv 来自目录表）' if rvmap else '关闭（无 rv 映射）'))
 
     rows, errs = [], []
+    n_rv = 0
 
     def on_err(name, exc):
         if len(errs) < 10:
@@ -123,7 +130,16 @@ def extract(limit_per_tar=None):
                 continue
             sp['name'] = fp
             sp['parsed'] = spectra.parse_name(fp)
-            rows.append(spectra.spectrum_features(sp))
+            oid = sp.get('header', {}).get('OBSID')
+            rv = None
+            if rvmap is not None and oid is not None:
+                try:
+                    rv = rvmap.get(int(oid))
+                except (TypeError, ValueError):
+                    rv = None
+                if rv is not None:
+                    n_rv += 1
+            rows.append(spectra.spectrum_features(sp, rv=rv))
             n += 1
             if n % 500 == 0:
                 say('  已处理 %d/%d，%.1f 分' % (n, len(files),
@@ -137,7 +153,8 @@ def extract(limit_per_tar=None):
             say('  %s -> %s' % (nme, e))
 
     df = pd.DataFrame(rows)
-    say('\n合计 %d 条光谱，耗时 %.1f 分' % (len(df), (time.time() - t0) / 60.0))
+    say('\n合计 %d 条光谱，其中 %d 条取得 RV 用于红移改正，耗时 %.1f 分'
+        % (len(df), n_rv, (time.time() - t0) / 60.0))
     return df
 
 
@@ -152,12 +169,37 @@ def main():
     if limit:
         say('模式: 限量 %d 条（加 --full 可尝试全量）' % limit)
 
+    # ---------------- 先读目录，建立 obsid -> rv 映射 ----------------
+    # 红移改正需要 rv，而 rv 只在目录表 stellar 里（光谱 FITS 头没有）。
+    # 因此必须**先**读目录、**再**提取光谱特征，顺序不能颠倒。
+    pkl = os.path.join(loader.INTERIM_DIR, 'stellar.pkl')
+    rvmap = None
+    cat = None
+    if os.path.exists(pkl):
+        say('\n读取目录表以获取视向速度 ...')
+        _full = pd.read_pickle(pkl)
+        cat = _full[[c for c in ['obsid', 'gp_id', 'teff', 'teff_err', 'logg',
+                                 'feh', 'feh_err', 'snrr', 'rv', 'subclass',
+                                 'plan_prefix'] if c in _full.columns]].copy()
+        del _full
+        cat['obsid'] = pd.to_numeric(cat['obsid'], errors='coerce')
+        rvmap = {}
+        if 'rv' in cat.columns:
+            ok = cat[['obsid', 'rv']].dropna()
+            rvmap = dict(zip(ok['obsid'].astype('int64').to_numpy(),
+                             ok['rv'].astype(float).to_numpy()))
+        say('  rv 映射: %d 条（RV 中位 %.1f km/s，|RV| 最大 %.1f km/s）'
+            % (len(rvmap), float(cat['rv'].median()) if 'rv' in cat else float('nan'),
+               float(cat['rv'].abs().max()) if 'rv' in cat else float('nan')))
+    else:
+        say('!! 没有 %s，红移改正将关闭，且跳过 join' % pkl)
+
     out = os.path.join(loader.INTERIM_DIR, 'spectra_features.csv')
     if os.path.exists(out) and '--reuse' in sys.argv:
         say('复用缓存 %s' % out)
         SF = pd.read_csv(out)
     else:
-        SF = extract(limit_per_tar=limit)
+        SF = extract(limit_per_tar=limit, rvmap=rvmap)
         if SF is None or SF.empty:
             return 1
         SF.to_csv(out, index=False, encoding='utf-8-sig')
@@ -174,21 +216,13 @@ def main():
     say('\n' + '-' * 84)
     say('与目录表 stellar join（按 OBSID）')
     say('-' * 84)
-    pkl = os.path.join(loader.INTERIM_DIR, 'stellar.pkl')
-    if not os.path.exists(pkl):
-        say('!! 没有 %s，跳过 join' % pkl)
+    if cat is None:
+        say('!! 目录表未载入，跳过 join')
         with open(os.path.join(TABLES, 'spectra_report.txt'), 'w',
                   encoding='utf-8-sig') as f:
             f.write('\n'.join(LOG))
         return 0
 
-    # pd.read_pickle 不支持 columns 参数，只能整体读入后再取列。
-    # 全量 pickle 约 1.15 GB，读入峰值内存约 9 GB，这是本环境下的已知开销。
-    want = ['obsid', 'gp_id', 'teff', 'teff_err', 'logg', 'feh', 'feh_err',
-            'snrr', 'subclass', 'plan_prefix']
-    cat = pd.read_pickle(pkl)
-    cat = cat[[c for c in want if c in cat.columns]].copy()
-    cat['obsid'] = pd.to_numeric(cat['obsid'], errors='coerce')
     SF2 = SF.copy()
     SF2['obsid_num'] = pd.to_numeric(SF2['OBSID'], errors='coerce')
     j = SF2.merge(cat, left_on='obsid_num', right_on='obsid', how='inner')

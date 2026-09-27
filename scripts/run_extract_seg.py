@@ -70,7 +70,10 @@ def main():
         page = prog['page']
         rows_total = prog['rows']
     else:
-        cursor = lo
+        # 下界必须减 1：查询谓词是 `obsid > cursor`，若直接取 cursor = lo
+        # 则 obsid 恰好等于 OBSID_MIN(=101001) 的那一条**永远取不到**。
+        # 本次因 worker 0 从旧的顺序抽取成果继承了首行才没丢，从零重跑会少 1 行。
+        cursor = lo - 1
         page = 0
         rows_total = 0
         # worker 0 承接旧的顺序抽取成果
@@ -109,8 +112,18 @@ def main():
                       % (w, page, attempt + 1, str(exc)[:150]), flush=True)
                 time.sleep(5 + 5 * attempt)
         if not ok:
-            print('[worker %d] 连续失败，保存进度退出' % w, flush=True)
-            break
+            # 注意：这里**不能**直接落到末尾的无条件 done=True。
+            # 否则"连续失败"会被记成"已完成"，下次续跑会直接跳过，
+            # 中断造成的静默缺口就再也补不回来了。
+            with open(prog_path + '.tmp', 'w', encoding='utf-8') as f:
+                json.dump({'cursor': cursor, 'page': page, 'rows': rows_total,
+                           'lo': lo, 'hi': hi, 'done': False,
+                           'aborted': True, 'reason': 'consecutive query failures'},
+                          f, indent=1)
+            os.replace(prog_path + '.tmp', prog_path)
+            print('[worker %d] 连续失败 → 标记 aborted 且 done=False，保存进度退出'
+                  % w, flush=True)
+            return 2
 
         if not rows:
             print('[worker %d] 区间内无更多行 → 完成' % w, flush=True)
