@@ -1,14 +1,16 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
-07_figures.py —— 出图
+07_figures.py —— 出图（8 张）
 
 产出 results/figures/ 下的 PNG：
-  fig1_repeat_dist.png       复观组规模分布
-  fig2_sigma_vs_err.png      实测池化 σ 对 官方误差（三参数）
-  fig3_conv_snr.png          复观次数收敛：σ 随组内观测数下降 → 逼近真值
-  fig4_by_plan.png           按观测计划的 σ/err 与 chi2_red
-  fig5_leakage.png           标签泄漏：随机划分 vs 分组划分
-  fig6_snr_bins.png          σ/err 随信噪比变化
+  fig1_repeat_dist.png        复观组规模分布
+  fig2_sigma_vs_err.png       实测池化 σ 对 官方误差（三参数）
+  fig3_conv_snr.png           复观次数收敛：σ 与官方误差随组内观测数变化（双轴含 χ²_red）
+  fig4_by_plan.png            按观测计划的 σ/err 与 χ²_red
+  fig5_leakage.png            标签泄漏：随机划分 vs 分组划分（基础版特征集对比）
+  fig6_snr_bins.png           σ/err 随信噪比变化
+  fig7_leakage_capacity.png   泄漏倍数随模型容量与复观率变化（主实验）
+  fig8_paired_vs_naive.png    配对比较 vs 朴素计划均值：表面差异几乎全是样本选择
 """
 from __future__ import annotations
 
@@ -21,7 +23,10 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-ROOT = r'D:\ds工作区\01-科研实习\LAMOST-复观恒星'
+# 项目根按本文件位置向上两级解析（scripts/ → 项目根）。
+# 不再硬编码绝对路径 —— 否则别人 clone 到别的目录跑不起来，
+# 也无法把项目整体复制到临时目录做安全试跑。
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from src import loader  # noqa: E402
 

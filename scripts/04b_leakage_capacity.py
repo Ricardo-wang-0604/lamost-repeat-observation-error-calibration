@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 04b_leakage_capacity.py —— 标签泄漏的**决定性**实验
 
@@ -13,14 +13,17 @@
 本脚本从三个维度把效应打开：
 
   维度一 · 模型容量
-      min_child_samples ∈ {1, 5, 20, 40, 100}
+      min_child_samples ∈ {1, 10, 40}（见 CAPACITIES 常量）
       容量越大 → 越能做出"恒星专属"的叶子 → 泄漏越显著
+      实测 10/12 个（子集 × 标签）组合随 min_child_samples 增大而倍数单调下降，
+      例外为 HIP/teff 与 HIP/logg（HIP 是最小子集，噪声更大）。
 
   维度二 · 最近邻（决定性对照）
       KNN(k=1)。随机划分下，测试观测在训练集中存在**特征完全相同**的样本
       （同一颗星的另一次观测），1-NN 必然返回同一颗星的标签，
       残差退化为组内离散；分组划分下最近邻只能是别的星。
       这一条不依赖任何超参调校，最没有辩解空间。
+      实测 11/12 个组合中 1-NN 的倍数最大，例外为 HIP/teff。
 
   维度三 · 复观率
       在全样本、repeat>=3 子集、以及高复观率的 HIP / TD 计划上分别做。
@@ -28,10 +31,12 @@
 
 产出
 ----
-results/tables/leakage_capacity.csv    容量扫描
-results/tables/leakage_knn.csv         最近邻对照
-results/tables/leakage_subsets.csv     各子集
-results/tables/leakage_capacity_report.txt
+results/tables/leakage_capacity.csv       容量扫描 + 最近邻对照（全表）
+results/tables/leakage_capacity_report.txt 人读报告
+
+注：早期版本此处曾承诺产出 `leakage_knn.csv` 与 `leakage_subsets.csv`，
+但代码从未写过这两个文件 —— 所有结果都在单一的 `leakage_capacity.csv` 里
+（用 `model` / `param` 两列区分模型），已更正文档。
 """
 from __future__ import annotations
 
@@ -45,7 +50,10 @@ import pandas as pd
 
 warnings.filterwarnings('ignore')
 
-ROOT = r'D:\ds工作区\01-科研实习\LAMOST-复观恒星'
+# 项目根按本文件位置向上两级解析（scripts/ → 项目根）。
+# 不再硬编码绝对路径 —— 否则别人 clone 到别的目录跑不起来，
+# 也无法把项目整体复制到临时目录做安全试跑。
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from src import loader, leakage as lk  # noqa: E402
 
@@ -56,9 +64,10 @@ TARGETS = ['teff', 'logg', 'feh']
 
 # 计算预算控制
 # -------------
-# 全量 745 万行 × 5 子集 × 3 标签 × 4 模型 × 2 划分 会超过 2 小时。
+# 全量 745 万行 × 4 子集 × 3 标签 × 4 模型 × 2 划分 会超过 2 小时。
 # 泄漏效应由**分组结构**决定，不依赖样本绝对大小；因此对每个子集做
-# 按观测的确定性随机下采样，保留复观结构（期望复观率不变）。
+# **按恒星（gp_id）整组保留**的确定性下采样 —— 注意**不能按观测抽样**，
+# 那会打散复观配对、把效应抹平（见 subsample() 的 docstring 与 README §4.3）。
 MAX_N = 400_000
 N_ESTIMATORS = 200
 CAPACITIES = (1, 10, 40)
@@ -156,6 +165,80 @@ def run_pair(X, y, g, make, test_size=0.2, seed=42, tag=''):
     return a, b
 
 
+def demo_subsampling(df, max_n=400_000, seed=0, key='gp_id'):
+    """
+    演示两种下采样方式的差别 —— 这是本项目最重要的方法论教训的可复现证明。
+
+    纯统计计算（**不训练任何模型**，秒级），因此可以每次都跑：
+
+      方案 A 按**观测**随机抽            → 复观配对被打散
+      方案 B 按**恒星**整组保留（本项目） → 复观结构不变
+
+    对每种方案报告：
+      · 抽样后的复观率 = 行数 / 唯一恒星数
+      · 随机划分下的"精确命中率" = 测试观测中，其**特征向量与某条训练样本完全相同**
+        的比例（用 numpy void 视图做行级指纹）。这正是泄漏的直接来源。
+
+    实测：按观测抽样会把复观率从 1.381× 打到约 1.03×，精确命中率降到约 5%，
+    于是泄漏效应**完全检测不到**；按恒星抽样则保留 1.35×，命中率约 37%。
+
+    见 README §4.3。
+    """
+    def fingerprint(X):
+        Xc = np.ascontiguousarray(X, dtype=np.float64)
+        return Xc.view(np.dtype((np.void, Xc.dtype.itemsize * Xc.shape[1]))).ravel()
+
+    feat = [c for c in lk.STAR_LEVEL_FEATURES if c in df.columns]
+    if df.empty or not feat:
+        return
+    rng = np.random.RandomState(seed)
+
+    # --- 方案 A：按观测抽样 ---
+    if len(df) > max_n:
+        idx = np.sort(rng.choice(len(df), size=max_n, replace=False))
+        A = df.iloc[idx]
+    else:
+        A = df
+    # --- 方案 B：按恒星抽样 ---
+    if len(df) > max_n:
+        uniq = df[key].unique()
+        rng.shuffle(uniq)
+        sizes = df.groupby(key, observed=True).size()
+        order = sizes.reindex(uniq).fillna(0).to_numpy()
+        k = int(np.searchsorted(np.cumsum(order), max_n) + 1)
+        B = df[df[key].isin(set(uniq[:k].tolist()))]
+    else:
+        B = df
+
+    say('\n' + '=' * 86)
+    say('  下采样方式对比（纯统计，不训练模型）—— README §4.3 的可复现证明')
+    say('=' * 86)
+    say('  %-22s %10s %10s %12s %14s'
+        % ('方案', '行数', '唯一恒星', '复观率', '随机划分精确命中率'))
+    for lab, sub in (('A 按观测抽样', A), ('B 按恒星整组保留', B)):
+        n = len(sub)
+        ng = sub[key].nunique()
+        # 随机划分下测试集精确命中率
+        sub2 = sub.dropna(subset=feat + ['teff'])
+        if len(sub2) < 1000:
+            say('  %-22s %10d %10d %12.3f %14s' % (lab, n, ng, n / max(ng, 1), '-'))
+            continue
+        X = sub2[feat].to_numpy(dtype=np.float64)
+        m = len(X)
+        n_te = int(round(m * 0.2))
+        perm = rng.permutation(m)
+        te, tr = perm[:n_te], perm[n_te:]
+        hit = float(np.isin(fingerprint(X[te]), fingerprint(X[tr])).mean())
+        say('  %-22s %10d %10d %12.3f %13.1f%%'
+            % (lab, n, ng, n / max(ng, 1), 100 * hit))
+    say('\n  按观测抽样把复观配对打散 ⇒ 精确命中率骤降 ⇒ 泄漏效应无法检出。')
+    say('  这是本项目第一版实验失败的**根本原因**，不是"泄漏不存在"。')
+
+    with open(os.path.join(TABLES, 'subsampling_demo.txt'), 'w',
+              encoding='utf-8-sig') as f:
+        f.write('\n'.join(LOG))
+
+
 def main():
     t0 = time.time()
     say('=' * 86)
@@ -169,12 +252,22 @@ def main():
                              .str.extract(r'^([A-Za-z]+)', expand=False))
     df['plan_prefix'] = df['plan_prefix'].astype('string').fillna('UNK')
 
+    # ---------------- 先验证下采样方式的影响（秒级，不训练模型）----------------
+    # 这一步产出 README §4.3 引用的可复现证明：按观测抽样会打散复观配对。
+    # `--demo-only` 只跑这一步就退出（无需等待 35 分钟的模型训练）。
+    if '--skip-demo' not in sys.argv:
+        try:
+            demo_subsampling(df)
+        except Exception as exc:  # noqa: BLE001
+            say('[下采样对比跳过] %s' % exc)
+    if '--demo-only' in sys.argv:
+        return 0
+
     # ---------------- 子集定义 ----------------
     cnt = df.groupby('gp_id', observed=True).size()
     nrep = df['gp_id'].map(cnt).fillna(0).to_numpy()
     masks = {
         'all': np.ones(len(df), dtype=bool),
-        'repeat>=2': nrep >= 2,
         'repeat>=3': nrep >= 3,
         'HIP': (df['plan_prefix'] == 'HIP').to_numpy(),
         'TD': (df['plan_prefix'] == 'TD').to_numpy(),

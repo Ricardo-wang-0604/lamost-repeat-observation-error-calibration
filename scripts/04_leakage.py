@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 04_leakage.py —— 标签泄漏实验
 
@@ -45,7 +45,10 @@ import pandas as pd
 warnings.filterwarnings('ignore', category=UserWarning)
 os.environ.setdefault('PYTHONWARNINGS', 'ignore')
 
-ROOT = r'D:\ds工作区\01-科研实习\LAMOST-复观恒星'
+# 项目根按本文件位置向上两级解析（scripts/ → 项目根）。
+# 不再硬编码绝对路径 —— 否则别人 clone 到别的目录跑不起来，
+# 也无法把项目整体复制到临时目录做安全试跑。
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from src import loader, leakage as lk  # noqa: E402
 
@@ -72,6 +75,24 @@ def main():
     size = df.groupby('gp_id', observed=True).size()
     say('恒星 %d 颗，复观星 %d 颗 (%.2f%%)'
         % (len(size), int((size >= 2).sum()), 100.0 * (size >= 2).sum() / len(size)))
+
+    # ---------------- 按「恒星」下采样（关键！）----------------
+    # 不能按观测抽样：一颗星通常只有 2 次观测，按观测随机抽会打散复观配对，
+    # 复观率从 1.381× 掉到 1.03×，泄漏效应会完全检测不到（本项目踩过的坑，见 README §4.3）。
+    # 这里按 gp_id 整组保留，复观结构不变。
+    MAX_N = int(os.environ.get('LEAKAGE_MAX_N', '400000'))
+    if len(df) > MAX_N:
+        uniq = df['gp_id'].unique()
+        rng = np.random.RandomState(0)
+        rng.shuffle(uniq)
+        sizes = df.groupby('gp_id', observed=True).size()
+        order = sizes.reindex(uniq).fillna(0).to_numpy()
+        k = int(np.searchsorted(np.cumsum(order), MAX_N) + 1)
+        kept = set(uniq[:k].tolist())
+        before = len(df)
+        df = df[df['gp_id'].isin(kept)]
+        say('按恒星下采样: %d → %d 行（保留全部观测，复观率 %.3f×）'
+            % (before, len(df), len(df) / max(df['gp_id'].nunique(), 1)))
 
     FEATURE_SETS = ['photometry', 'obs', 'all']
     TARGETS = ['teff', 'logg', 'feh']

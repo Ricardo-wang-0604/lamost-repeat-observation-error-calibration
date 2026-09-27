@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 08_report.py —— 把所有结果表汇总成一份可直接阅读的 Markdown 报告
 
@@ -14,7 +14,10 @@ import time
 import numpy as np
 import pandas as pd
 
-ROOT = r'D:\ds工作区\01-科研实习\LAMOST-复观恒星'
+# 项目根按本文件位置向上两级解析（scripts/ → 项目根）。
+# 不再硬编码绝对路径 —— 否则别人 clone 到别的目录跑不起来，
+# 也无法把项目整体复制到临时目录做安全试跑。
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TABLES = os.path.join(ROOT, 'results', 'tables')
 REPORT = os.path.join(ROOT, 'results', 'REPORT.md')
 
@@ -224,8 +227,9 @@ def main():
         A(md_table(pd.DataFrame(rows), floatfmt='%.2f'))
         A('\n极端组的 Teff 组内极差中位达 594 K（正常组 47 K），且最高 χ²/dof 的组'
           '给出 6332→13328 K 这类跨 7000 K 的"复观"——物理上不可能是同一颗恒星，'
-          '指向**光纤污染或 Gaia 源错配**。异常组中 A1+A2 占 36.5%，'
-          '与 §3 中 A 型 [Fe/H] 的 χ²_red 偏高相呼应。\n')
+          '指向**光纤污染或 Gaia 源错配**。异常组中 A1+A2 占 36.5%。\n'
+          '\n> 该结论与 §3（按观测计划分层）无关；A 型 [Fe/H] 的 χ²_red 偏高见 '
+          '`README.md §5.4` 与 `results/tables/repeatability_by_subclass.csv`。\n')
 
     # ---------- 7. 时间间隔判别测试 ----------
     A('\n## 7. 判别测试：极端离散来自「变星」还是「污染/错配」？\n')
@@ -258,18 +262,51 @@ def main():
         A('_（尚未计算；请运行 `scripts/09_time_interval.py`）_\n')
 
     # ---------- 8. 由此解开的文献矛盾 ----------
+    # 注意：本节全部数字都是从上游结果文件**读出来**的，不是硬编码。
+    # 早期版本把 0.603 / 0.674 / 36.8 / 5.875 写成字面量，导致
+    # **输入文件全部缺失时本节仍会照旧输出结论**（伪造证据）。
+    # 现在先从 time_interval_report.txt 与 robustness 表里取值，取不到就如实标注。
     A('\n## 8. 由此解开的文献矛盾：χ² 判据 vs 分位数判据\n')
-    A('\n| 工作 | 判据 | 对离群敏感度 | 结论 |')
-    A('|---|---|---|---|')
-    A('| Zhang S. et al. 2023, RAA 23, 015018 | χ² 类统计量、修正因子 k | 极敏感（平方量） | 官方误差估计不准 |')
-    A('| Liang J.-C. et al. 2025, ApJ 996, 97 (PyLASP) | 分位数 / 直接比较 | 稳健 | 官方误差偏保守 |')
-    A('| 本项目 | 两者都做 | — | 两者都对，测的是分布的不同部位 |')
-    A('\n- **分位数口径**（z 中位 0.603 vs 理论 0.674）→ 主体略偏保守，**与 Liang 2025 一致**')
-    A('- **χ² 口径**（χ²_red = 5.875）→ 被重尾完全主导，**与 Zhang 2023 的"误差不准"同向**')
-    A('\n因为 χ² 是平方量，36.8 倍的重尾超标足以把 χ²_red 从 1 抬到 5.9，'
-      '而主体（中位数、P90）几乎不受影响。\n')
-    A('\n> **方法学结论**：用复观检验参数误差时，χ² 类判据对污染极不稳健，'
-      '必须同时报告分位数口径，否则会得出与稳健口径相反的结论。\n')
+
+    z_med, z_theo, tail_x, chi2_full = None, None, None, None
+    ti_p = os.path.join(TABLES, 'time_interval_report.txt')
+    if os.path.exists(ti_p):
+        t = read_text(ti_p)
+        m = re.search(r'z 的 50\.0 分位\s*=\s*([\d.]+)', t)
+        if m:
+            z_med = float(m.group(1))
+        m = re.search(r'标准正态应为\s*([\d.]+)', t)
+        if m:
+            z_theo = float(m.group(1))
+        m = re.search(r'z > 3\.291 的占比 = ([\d.]+)%.*?即 ([\d.]+) 倍', t)
+        if m:
+            tail_x = float(m.group(2))
+    tr_p = os.path.join(TABLES, 'robustness_trim_variables.csv')
+    if os.path.exists(tr_p):
+        _tr = pd.read_csv(tr_p)
+        _r = _tr[(_tr['param'] == 'teff') & (_tr['trim_frac'] == 0)]
+        if len(_r):
+            chi2_full = float(_r['chi2_red'].iloc[0])
+
+    if z_med is None or chi2_full is None:
+        A('_（缺 `time_interval_report.txt` 或 `robustness_trim_variables.csv`，'
+          '本节无法给出数字；请先运行 `scripts/09_time_interval.py` 与 '
+          '`scripts/10_robustness.py`）_\n')
+    else:
+        A('\n| 工作 | 判据 | 对离群敏感度 | 结论 |')
+        A('|---|---|---|---|')
+        A('| Zhang S. et al. 2023, RAA 23, 015018 | χ² 类统计量、修正因子 k | 极敏感（平方量） | 官方误差估计不准 |')
+        A('| Liang J.-C. et al. 2025, ApJ 996, 97 (PyLASP) | 分位数 / 直接比较 | 稳健 | 官方误差偏保守 |')
+        A('| 本项目 | 两者都做 | — | 两者都对，测的是分布的不同部位 |')
+        A('\n- **分位数口径**（z 中位 %.3f vs 理论 %.3f）→ 主体略偏保守，**与 Liang 2025 一致**'
+          % (z_med, z_theo if z_theo else 0.674))
+        A('- **χ² 口径**（χ²_red = %.3f）→ 被重尾完全主导，**与 Zhang 2023 的"误差不准"同向**'
+          % chi2_full)
+        if tail_x is not None:
+            A('\n因为 χ² 是平方量，%.1f 倍的重尾超标足以把 χ²_red 从 1 抬到 %.2f，'
+              '而主体（中位数、P90）几乎不受影响。\n' % (tail_x, chi2_full))
+        A('\n> **方法学结论**：用复观检验参数误差时，χ² 类判据对污染极不稳健，'
+          '必须同时报告分位数口径，否则会得出与稳健口径相反的结论。\n')
 
     # ---------- 9. 跨计划 ----------
     A('\n## 9. 跨观测计划的系统偏差（配对）\n')

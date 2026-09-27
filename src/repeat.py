@@ -43,7 +43,10 @@ def group_stats(df, key='gp_id', value='teff', err='teff_err',
     按 key 聚合的逐组统计（全向量化）。
 
     返回 DataFrame（index=key），列：
-      n_obs, mean, wmean, pooled_ss, dof, std, chi2, err_mean, err_median, snr_median
+      n_obs, mean, wmean, pooled_ss, dof, std, chi2, err_median, snr_median
+
+    注：早期版本还返回 `err_mean`，但它在任何结果表里都未被使用
+    （在 125 万组 × 3 参数上是白算的聚合），已移除。
     """
     use = df.loc[:, [key, value, err, snr_col]].copy()
     use = use[np.isfinite(use[value].to_numpy(dtype=np.float64, na_value=np.nan))]

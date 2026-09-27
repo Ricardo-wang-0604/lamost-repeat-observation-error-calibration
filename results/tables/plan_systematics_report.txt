@@ -178,4 +178,6 @@
     VB       星数  98730  均值    -0.1809  散布    0.3007
     kepler   星数   5403  均值    -0.0767  散布    0.2583
 
+-> plan_pair_offsets.csv (204 行), plan_pair_counts.csv (68 行)
+
 总耗时 2.8 分

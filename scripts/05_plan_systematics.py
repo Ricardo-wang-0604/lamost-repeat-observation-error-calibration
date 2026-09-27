@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 05_plan_systematics.py —— 跨观测计划的系统偏差（配对比较）
 
@@ -41,7 +41,10 @@ import time
 import numpy as np
 import pandas as pd
 
-ROOT = r'D:\ds工作区\01-科研实习\LAMOST-复观恒星'
+# 项目根按本文件位置向上两级解析（scripts/ → 项目根）。
+# 不再硬编码绝对路径 —— 否则别人 clone 到别的目录跑不起来，
+# 也无法把项目整体复制到临时目录做安全试跑。
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from src import loader  # noqa: E402
 

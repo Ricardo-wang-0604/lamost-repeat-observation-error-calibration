@@ -22,10 +22,12 @@ import os
 import numpy as np
 import pandas as pd
 
-ROOT = r'D:\ds工作区\01-科研实习\LAMOST-复观恒星'
-RAW_DIR = os.path.join(ROOT, 'data', 'raw')
-PAGES_DIR = os.path.join(RAW_DIR, 'stellar_pages')
-INTERIM_DIR = os.path.join(ROOT, 'data', 'interim')
+from . import paths as _paths
+
+ROOT = _paths.ROOT
+RAW_DIR = _paths.RAW
+PAGES_DIR = _paths.PAGES_DIR
+INTERIM_DIR = _paths.INTERIM
 
 SENTINEL_CUTOFF = -900.0
 

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 判别测试：极端离散来自「变星」还是「污染/错配」？
 
@@ -29,7 +29,10 @@ import time
 import numpy as np
 import pandas as pd
 
-ROOT = r'D:\ds工作区\01-科研实习\LAMOST-复观恒星'
+# 项目根按本文件位置向上两级解析（scripts/ → 项目根）。
+# 不再硬编码绝对路径 —— 否则别人 clone 到别的目录跑不起来，
+# 也无法把项目整体复制到临时目录做安全试跑。
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from src import loader, repeat as rp  # noqa: E402
 
@@ -88,7 +91,10 @@ def analyze(df, param, err, label):
         say('  !! 配对太少，跳过')
         return None
 
-    # 归一化偏差：|Δx| / (sqrt(2)·σ_quoted)，理论中位应约 0.95（半正态）
+    # 归一化偏差 z = |Δx| / (√2·σ_quoted)。
+    # 零假设（官方误差正确、两次测量独立）下 Δx ~ N(0, 2σ²)，
+    # 故 z 服从**半正态分布**，其中位数为 0.674。
+    # （早期注释误写为 0.95，已更正；脚本自身输出用的就是 0.674。）
     p['z'] = p['dv_first'] / (np.sqrt(2.0) * p['e_first'])
     p['logdt'] = np.log10(p['dt_first'].clip(lower=1e-2))
 
